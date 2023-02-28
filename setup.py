@@ -9,6 +9,6 @@ setup(
     author='Rohit Choudhary',
     author_email='rohit.choudhary@credgenics.com',
     install_requires = [
-        "etcd3==0.12.0,protobuf==3.19.6",
+        "etcd3==0.12.0","protobuf==3.19.6",
     ]
 )
