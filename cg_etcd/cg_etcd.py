@@ -33,6 +33,7 @@ class ETCD:
         response = self._pool.get_prefix(key_prefix)
         for value in response:
             key = value[1].key.decode()
+            key = key.replace('ians/', '')
             value = value[0].decode()
             self.data[key] = value
 
