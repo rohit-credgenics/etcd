@@ -1,4 +1,6 @@
 from etcd3.client import client
+from functools import wraps
+from time import sleep
 import logging
 
 class ETCD:
@@ -14,9 +16,26 @@ class ETCD:
         self.timeout = kwargs.get('timeout', None)
         self.user = kwargs.get('user', None)
         self.password = kwargs.get('password', None)
+        self.max_retries = kwargs.get('max_retries', 3)
+        self.retry_interval = kwargs.get('retry_interval', 2)
+        self.retry_count = 0
         self.data = kwargs.get('data', None)
         self.logger = logging.getLogger(__name__)
         self.connect()
+     
+    def handle_closed_connection(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                if "Cannot invoke RPC on closed channel!" in str(e):
+                    self = args[0]
+                    self.logger.critical("ConnectionClosedError: %s", e)
+                    self.retry_connection()
+                else:
+                    raise e
+        return wrapper
 
     def connect(self):
         try:
@@ -35,23 +54,19 @@ class ETCD:
         except Exception as e:
             self.logger.error("Failed to connect to etcd at %s:%d: %s", self.host, self.port, str(e))
     
-
+    @handle_closed_connection
     def get_config(self, key_prefix: str):
-        try:
-            response = self._pool.get_prefix(key_prefix)
-            for value in response:
-                key = value[1].key.decode('utf-8')
-                key = key.replace(key_prefix, '')
-                value = value[0].decode('utf-8')
-                self.data[key] = value
-                self.key_prefix = key_prefix
-                self.watch_key_prefix_and_callback(key_prefix)
-            self.logger.info("Retrieved config values for key prefix %s", key_prefix)
-
-        except Exception as e:
-            self.logger.error("Failed to retrieve config values for key_prefix %s: %s", key_prefix, str(e))
+        response = self._pool.get_prefix(key_prefix)
+        for value in response:
+            key = value[1].key.decode('utf-8')
+            key = key.replace(key_prefix, '')
+            value = value[0].decode('utf-8')
+            self.data[key] = value
+            self.key_prefix = key_prefix
+            self.watch_key_prefix_and_callback(key_prefix)
+        self.logger.info("Retrieved config values for key prefix %s", key_prefix)
         
-
+    @handle_closed_connection
     def watch_key_prefix_and_callback(self, key_prefix: str):
         try:
             self._pool.add_watch_prefix_callback(
@@ -72,3 +87,24 @@ class ETCD:
 
         except Exception as e:
             self.logger.error("Failed to update config value %s: %s", key, str(e))    
+    
+    def close(self):
+        self._pool.close()
+
+    def retry_connection(self):
+        try:
+            while self.retry_count < self.max_retries:
+                self.retry_count += 1
+                self.logger.info(f"Retrying connection, attempt {self.retry_count}...")
+                try:
+                    self.connect()
+                    self.logger.info("Connection successful")
+                    self.retry_count = 0 
+                    return
+                except Exception as e:
+                    self.logger.error(f"Connection failed: {e}")
+                    sleep(self.retry_interval)
+        except Exception as e:
+            self.logger.critical("Max retries exceeded, exiting...")
+
+
