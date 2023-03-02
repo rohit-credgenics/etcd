@@ -3,7 +3,32 @@ from functools import wraps
 from time import sleep
 import logging
 
+
 class ETCD:
+
+    """
+    The ETCD class is a constructor that initializes an instance of an ETCD object. It takes various optional keyword arguments (kwargs) that can be used to configure the object.
+
+    The parameters are:
+
+        host (string)   : the hostname or IP address of the ETCD server (default: None)
+        port (int)  : the port number to connect to (default: None)
+        ca_cert (string)    : path to a PEM-encoded CA certificate file to use to authenticate the server (default: None)
+        cert_key (string)   : path to a PEM-encoded private key file to use for client authentication (default: None)
+        cert_cert (string)  : path to a PEM-encoded client certificate file to use for client authentication (default: None)
+        grpc_options (string)    : dictionary of gRPC options to use when establishing a connection to the server (default: None)
+        timeout (int)   : the number of seconds to wait before timing out on a connection attempt (default: None)
+        user (string)   : the username to use for authentication (default: None)
+        password (string)    : the password to use for authentication (default: None)
+        max_retries (int)    : the maximum number of times to retry a connection if it fails (default: 3)
+        retry_interval (int)    : the number of seconds to wait before retrying a failed connection attempt (default: 2)
+        retry_count (int)   : variable that tracks the number of retries attempted by the ETCD client (default: 0)
+        configs (dict)  : a dictionary to store the configuration values retrieved from the ETCD server (default: None)
+        logger  : a logger object to use for logging
+
+        connect() method is called in the constructor to establish a connection to the ETCD server.
+
+    """
 
     def __init__(self, **kwargs) -> None:
         self._pool = None
@@ -22,14 +47,14 @@ class ETCD:
         self.configs = kwargs.get('configs', None)
         self.logger = logging.getLogger(__name__)
         self.connect()
-     
+
     def handle_closed_connection(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
             try:
                 return func(*args, **kwargs)
             except Exception as e:
-                if "Cannot invoke RPC on closed channel!" in str(e):
+                if "closed channel!" in str(e):
                     self = args[0]
                     self.logger.critical("ConnectionClosedError: %s", e)
                     self.retry_connection()
@@ -49,41 +74,67 @@ class ETCD:
             password=self.password,
             grpc_options=self.grpc_options
         )
-    
+
     @handle_closed_connection
-    def get_config(self, key_prefix: str):
-        response = self._pool.get_prefix(key_prefix)
-        for value in response:
-            key = value[1].key.decode('utf-8')
-            key = key.replace(key_prefix, '')
-            value = value[0].decode('utf-8')
-            self.configs[key] = value
-            self.key_prefix = key_prefix
-            self.watch_key_prefix_and_callback(key_prefix)
-        self.logger.info("Retrieved config values for key prefix %s", key_prefix)
+    def get_config(self, service_name: str):
+        """
+        Retrieves configuration values for a specified service name from an etcd 
+        then stores them in a dictionary (configs)
+        If no configuration values are found raises a ValueError.
+
+        After retrieving the configuration values, the function sets up a 
+        watch on the specified key prefix (service name) and invokes a callback function whenever 
+        the values for the specified key prefix are updated.
+
+        parameter:
+            service_name (string)   : name of the service for which the configuration is being retrieved.
+
+        """
+
+        # adds a '/' to the end of the service name and uses it as a prefix to search for all keys with that prefix in the etcd server.
+        service_name = service_name + '/'
+        sequence_of_value_and_metadata_tuples = self._pool.get_prefix(service_name)
         
+        for value in sequence_of_value_and_metadata_tuples:
+            env_name = value[1].key.decode('utf-8')
+            env_name = env_name.replace(service_name, '')
+            env_value = value[0].decode('utf-8')
+            self.configs[env_name] = env_value
+            self.service_name = service_name
+
+        if not self.configs:
+            raise ValueError(
+                "Failed to retrieve config values for service_name %s", service_name)
+
+        self.watch_key_prefix_service_name_and_callback(service_name)
+
+        self.logger.info(
+            "Retrieved config values for service_name %s", service_name)
+
     @handle_closed_connection
-    def watch_key_prefix_and_callback(self, key_prefix: str):
+    def watch_key_prefix_service_name_and_callback(self, service_name: str):
         try:
             self._pool.add_watch_prefix_callback(
-                key_prefix=key_prefix, callback=self.callback)
-            self.logger.info("Started watching key_prefix %s for changes", key_prefix)
+                key_prefix=service_name, callback=self.callback)
+            self.logger.info(
+                "Started watching service_name %s for changes", service_name)
 
         except Exception as e:
-            self.logger.error("Failed to start watching key_prefix %s: %s", key_prefix, str(e))
-    
+            self.logger.error(
+                "Failed to start watching service_name %s: %s", service_name, str(e))
 
     def callback(self, response_or_err):
         try:
-            key, value = (response_or_err.events[0].key.decode('utf-8'), 
-                        response_or_err.events[0].value.decode('utf-8'))
-            key = key.replace(self.key_prefix, '')
-            self.configs[key] = value
-            self.logger.info("Updated config value for key %s", key)
+            env_name, env_value = (response_or_err.events[0].key.decode('utf-8'),
+                                   response_or_err.events[0].value.decode('utf-8'))
+            env_name = env_name.replace(self.service_name, '')
+            self.configs[env_name] = env_value
+            self.logger.info("Updated config value for key %s", env_name)
 
         except Exception as e:
-            self.logger.error("Failed to update config value %s: %s", key, str(e))    
-    
+            self.logger.error(
+                "Failed to update config value %s: %s", env_name, str(e))
+
     def close(self):
         self._pool.close()
 
@@ -91,16 +142,15 @@ class ETCD:
         try:
             while self.retry_count < self.max_retries:
                 self.retry_count += 1
-                self.logger.info(f"Retrying connection, attempt {self.retry_count}...")
+                self.logger.info(
+                    f"Retrying connection, attempt {self.retry_count}...")
                 try:
                     self.connect()
                     self.logger.info("Connection successful")
-                    self.retry_count = 0 
+                    self.retry_count = 0
                     return
                 except Exception as e:
                     self.logger.error(f"Connection failed: {e}")
                     sleep(self.retry_interval)
         except Exception as e:
             self.logger.critical("Max retries exceeded, exiting...")
-
-
