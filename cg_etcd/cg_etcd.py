@@ -19,7 +19,7 @@ class ETCD:
         self.max_retries = kwargs.get('max_retries', 3)
         self.retry_interval = kwargs.get('retry_interval', 2)
         self.retry_count = 0
-        self.data = kwargs.get('data', None)
+        self.configs = kwargs.get('configs', None)
         self.logger = logging.getLogger(__name__)
         self.connect()
      
@@ -38,21 +38,17 @@ class ETCD:
         return wrapper
 
     def connect(self):
-        try:
-            self._pool = client(
-                host=self.host,
-                port=self.port,
-                ca_cert=self.ca_cert,
-                cert_key=self.cert_key,
-                cert_cert=self.cert_cert,
-                timeout=self.timeout,
-                user=self.user,
-                password=self.password,
-                grpc_options=self.grpc_options
-            )
-            self.logger.info("Connected to etcd at %s:%d", self.host, self.port)
-        except Exception as e:
-            self.logger.error("Failed to connect to etcd at %s:%d: %s", self.host, self.port, str(e))
+        self._pool = client(
+            host=self.host,
+            port=self.port,
+            ca_cert=self.ca_cert,
+            cert_key=self.cert_key,
+            cert_cert=self.cert_cert,
+            timeout=self.timeout,
+            user=self.user,
+            password=self.password,
+            grpc_options=self.grpc_options
+        )
     
     @handle_closed_connection
     def get_config(self, key_prefix: str):
@@ -61,7 +57,7 @@ class ETCD:
             key = value[1].key.decode('utf-8')
             key = key.replace(key_prefix, '')
             value = value[0].decode('utf-8')
-            self.data[key] = value
+            self.configs[key] = value
             self.key_prefix = key_prefix
             self.watch_key_prefix_and_callback(key_prefix)
         self.logger.info("Retrieved config values for key prefix %s", key_prefix)
@@ -82,7 +78,7 @@ class ETCD:
             key, value = (response_or_err.events[0].key.decode('utf-8'), 
                         response_or_err.events[0].value.decode('utf-8'))
             key = key.replace(self.key_prefix, '')
-            self.data[key] = value
+            self.configs[key] = value
             self.logger.info("Updated config value for key %s", key)
 
         except Exception as e:
