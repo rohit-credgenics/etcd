@@ -1,5 +1,6 @@
 from etcd3.client import client
 from functools import wraps
+import importlib
 from time import sleep
 import logging
 
@@ -44,6 +45,7 @@ class ETCD:
         self.max_retries = kwargs.get('max_retries', 3)
         self.retry_interval = kwargs.get('retry_interval', 2)
         self.retry_count = 0
+        self.update_configs_function_path = kwargs.get('update_configs_function_path', 'app.settings import update_configs')
         self.configs = kwargs.get('configs', None)
         self.logger = logging.getLogger(__name__)
         self.connect()
@@ -94,7 +96,7 @@ class ETCD:
         # adds a '/' to the end of the service name and uses it as a prefix to search for all keys with that prefix in the etcd server.
         service_name = service_name + '/'
         sequence_of_value_and_metadata_tuples = self._pool.get_prefix(service_name)
-        
+
         for value in sequence_of_value_and_metadata_tuples:
             env_name = value[1].key.decode('utf-8')
             env_name = env_name.replace(service_name, '')
@@ -129,6 +131,14 @@ class ETCD:
                                    response_or_err.events[0].value.decode('utf-8'))
             env_name = env_name.replace(self.service_name, '')
             self.configs[env_name] = env_value
+            # Split the string into its components
+            module_name, function_name = self.update_configs_function_path.split(" import ")
+            # Import the module
+            module = importlib.import_module(module_name)
+            # Get the function from the module
+            update_configs = getattr(module, function_name)
+            update_configs()
+
             self.logger.info("Updated config value for key %s", env_name)
 
         except Exception as e:
