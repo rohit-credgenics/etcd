@@ -8,6 +8,7 @@ class ServiceConfig:
     def __init__(self, env: dict):
         for key, value in env.items():
             setattr(self, key, value)
+
 class ETCD:
 
     """
@@ -48,7 +49,6 @@ class ETCD:
         self.max_retries = kwargs.get('max_retries', 3)
         self.retry_interval = kwargs.get('retry_interval', 2)
         self.retry_count = 0
-        self.update_configs_function_path = kwargs.get('update_configs_function_path', 'app.settings import update_configs')
         self.configs = kwargs.get('configs', {})
         self.logger = logging.getLogger(__name__)
         self.connect()
@@ -107,7 +107,7 @@ class ETCD:
             self.configs[env_name] = env_value
             self.service_name = service_name
         
-        self.data_class = ServiceConfig(self.configs)
+        self.data_object = ServiceConfig(self.configs)
 
         if not self.configs:
             raise ValueError(
@@ -117,7 +117,7 @@ class ETCD:
 
         self.logger.info(
             "Retrieved config values for service_name %s", service_name)
-        return self.data_class
+        return self.data_object
 
     @handle_closed_connection
     def watch_key_prefix_service_name_and_callback(self, service_name: str):
@@ -138,14 +138,6 @@ class ETCD:
             env_name = env_name.replace(self.service_name, '')
             self.configs[env_name] = env_value
             setattr(self.data_class, env_name, env_value)
-            # # Split the string into its components
-            # module_name, function_name = self.update_configs_function_path.split(" import ")
-            # # Import the module
-            # module = importlib.import_module(module_name)
-            # # Get the function from the module
-            # update_configs = getattr(module, function_name)
-            # update_configs()
-
             self.logger.info("Updated config value for key %s", env_name)
 
         except Exception as e:
