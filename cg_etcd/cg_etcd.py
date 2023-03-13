@@ -1,13 +1,18 @@
 from etcd3.client import client
 from functools import wraps
-import importlib
 from time import sleep
 import logging
 
 class ServiceConfig:
-    def __init__(self, env: dict):
-        for key, value in env.items():
-            setattr(self, key, value)
+
+    def __init__(self):
+        """
+        A class to hold the configuration for the service.
+
+        Attributes:
+            All environment variables are set as attributes of the class instance.
+        """
+        pass
 
 class ETCD:
 
@@ -93,21 +98,24 @@ class ETCD:
 
         parameter:
             service_name (string)   : name of the service for which the configuration is being retrieved.
+        
+        return:
+            configs_object (object)  : object of ServiceConfig class
 
         """
 
-        # adds a '/' to the end of the service name and uses it as a prefix to search for all keys with that prefix in the etcd server.
+        # add a '/' to the end of the service name and uses it as a prefix to search for all keys with that prefix in the etcd server.
         service_name = service_name + '/'
         sequence_of_value_and_metadata_tuples = self._pool.get_prefix(service_name)
+        self.service_name = service_name
 
+        self.configs_object = ServiceConfig()
         for value in sequence_of_value_and_metadata_tuples:
             env_name = value[1].key.decode('utf-8')
             env_name = env_name.replace(service_name, '')
             env_value = value[0].decode('utf-8')
             self.configs[env_name] = env_value
-            self.service_name = service_name
-        
-        self.data_object = ServiceConfig(self.configs)
+            setattr(self.configs_object, env_name, env_value)
 
         if not self.configs:
             raise ValueError(
@@ -117,7 +125,7 @@ class ETCD:
 
         self.logger.info(
             "Retrieved config values for service_name %s", service_name)
-        return self.data_object
+        return self.configs_object
 
     @handle_closed_connection
     def watch_key_prefix_service_name_and_callback(self, service_name: str):
@@ -137,7 +145,9 @@ class ETCD:
                                    response_or_err.events[0].value.decode('utf-8'))
             env_name = env_name.replace(self.service_name, '')
             self.configs[env_name] = env_value
-            setattr(self.data_object, env_name, env_value)
+
+            # update values in ServiceConfig object
+            setattr(self.configs_object, env_name, env_value)
             self.logger.info("Updated config value for key %s", env_name)
 
         except Exception as e:
