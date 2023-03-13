@@ -137,7 +137,7 @@ class ETCD:
                                    response_or_err.events[0].value.decode('utf-8'))
             env_name = env_name.replace(self.service_name, '')
             self.configs[env_name] = env_value
-            setattr(self.data_class, env_name, env_value)
+            setattr(self.data_object, env_name, env_value)
             self.logger.info("Updated config value for key %s", env_name)
 
         except Exception as e:
